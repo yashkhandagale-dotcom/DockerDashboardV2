@@ -1,3 +1,18 @@
+# FIX #9 — PVC defined FIRST so it exists before the Deployment tries to mount it
+# Previously PVC was at the bottom of the file — kubectl apply processes top-to-bottom
+# and the Deployment would fail to find the PVC, leaving the pod in Pending state
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,15 +60,3 @@ spec:
         - name: redis-data
           persistentVolumeClaim:
             claimName: redis-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: redis-pvc
-  namespace: default
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi

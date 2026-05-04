@@ -22,14 +22,20 @@ COPY --from=builder /install /usr/local
 # Copy application source
 COPY app.py .
 
-# Owned by non-root user
-RUN chown -R appuser:appuser /app
+# Copy kubeconfig directly into image (avoids Windows volume mount encoding issues)
+COPY kubeconfig-docker.yaml /app/.kube/config
+
+# FIX #4 — Create .kube dir owned by appuser so mounted kubeconfig is readable
+RUN mkdir -p /app/.kube && chown -R appuser:appuser /app
 
 # Docker-native health check (complements K8s probes)
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')" || exit 1
 
 USER appuser
+
+# FIX #4 — Point KUBECONFIG to the appuser-accessible path
+ENV KUBECONFIG=/app/.kube/config
 
 EXPOSE 5000
 

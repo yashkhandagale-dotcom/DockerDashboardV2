@@ -4,7 +4,9 @@ metadata:
   name: devops-dashboard-config
   namespace: default
 data:
+  # FIX #7 — Removed NAMESPACE from ConfigMap
+  # NAMESPACE must be dynamic (from pod's own metadata.namespace fieldRef in deployment.yaml)
+  # Hardcoding "default" here would break deployments to other namespaces silently
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   DEPLOYMENT_NAME: "devops-dashboard"
-  NAMESPACE: "default"

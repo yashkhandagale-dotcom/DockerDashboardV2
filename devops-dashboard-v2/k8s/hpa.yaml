@@ -16,13 +16,13 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 60    # scale up when CPU > 60%
+          averageUtilization: 60
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 70    # scale up when memory > 70%
+          averageUtilization: 70
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60
@@ -31,7 +31,7 @@ spec:
           value: 2
           periodSeconds: 60
     scaleDown:
-      stabilizationWindowSeconds: 120   # wait 2 min before scaling down
+      stabilizationWindowSeconds: 120
       policies:
         - type: Pods
           value: 1

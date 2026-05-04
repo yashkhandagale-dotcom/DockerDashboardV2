@@ -32,13 +32,15 @@ spec:
             - containerPort: 5000
               name: http
 
+          # FIX #3 — Load REDIS_HOST, REDIS_PORT, DEPLOYMENT_NAME from ConfigMap
+          # Previously these were hardcoded values and the ConfigMap was never used
+          envFrom:
+            - configMapRef:
+                name: devops-dashboard-config
+
+          # FIX #7 — NAMESPACE comes from pod's own metadata (dynamic), not ConfigMap
+          # This ensures it works correctly even if deployed to a non-default namespace
           env:
-            - name: REDIS_HOST
-              value: redis
-            - name: REDIS_PORT
-              value: "6379"
-            - name: DEPLOYMENT_NAME
-              value: devops-dashboard
             - name: NAMESPACE
               valueFrom:
                 fieldRef:

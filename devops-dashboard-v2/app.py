@@ -9,28 +9,50 @@ app = Flask(__name__)
 
 REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-# Load K8s config — gracefully degrade if unavailable (e.g. Docker Compose)
-k8s_available = False
-try:
-    config.load_incluster_config()
-    k8s_available = True
-except Exception:
+# FIX #5 — Lazy Redis connection with retry instead of connecting at module load time
+def get_redis():
     try:
-        config.load_kube_config()
-        k8s_available = True
+        r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, socket_connect_timeout=2)
+        r.ping()
+        return r
     except Exception:
-        print("⚠️  No Kubernetes config found — K8s features disabled")
+        return None
 
-if k8s_available:
+# FIX — Lazy K8s client loader. Called on first API request, not at startup.
+# Previously: loaded once at module load → if it failed, K8s was disabled forever.
+# Now: retries on every request, logs the real error so you can debug it.
+_k8s_loaded = False
+_k8s_error = None
+v1 = apps_v1 = autoscaling_v2 = None
+
+def _load_k8s():
+    global _k8s_loaded, _k8s_error, v1, apps_v1, autoscaling_v2
+    if _k8s_loaded and v1 is not None:
+        return True  # already loaded successfully, reuse
+
+    # Reset so we retry on every call until it succeeds
+    _k8s_loaded = False
+    _k8s_error = None
+    try:
+        config.load_incluster_config()
+        print("✅ K8s config loaded: in-cluster")
+    except Exception as e1:
+        kubeconfig_path = os.environ.get('KUBECONFIG', None)
+        print(f"ℹ️  In-cluster config failed ({e1}), trying kubeconfig: {kubeconfig_path}")
+        try:
+            config.load_kube_config(config_file=kubeconfig_path)
+            print(f"✅ K8s config loaded: kubeconfig at {kubeconfig_path}")
+        except Exception as e2:
+            _k8s_error = str(e2)
+            print(f"❌ K8s config failed: {e2}")
+            return False
+
     v1 = client.CoreV1Api()
     apps_v1 = client.AppsV1Api()
     autoscaling_v2 = client.AutoscalingV2Api()
-else:
-    v1 = None
-    apps_v1 = None
-    autoscaling_v2 = None
+    _k8s_loaded = True
+    return True
 
 HTML = '''
 <!DOCTYPE html>
@@ -429,19 +451,20 @@ def healthz():
 @app.route('/readyz')
 def readyz():
     """Readiness probe — checks Redis connectivity."""
-    try:
-        r.ping()
+    r = get_redis()
+    if r:
         return jsonify({'status': 'ready'}), 200
-    except Exception as e:
-        return jsonify({'status': 'not ready', 'error': str(e)}), 503
+    return jsonify({'status': 'not ready', 'error': 'Redis unavailable'}), 503
 
 
 @app.route('/')
 def index():
-    try:
-        r.incr('requests')
-    except Exception:
-        pass
+    r = get_redis()
+    if r:
+        try:
+            r.incr('requests')
+        except Exception:
+            pass
     return render_template_string(HTML)
 
 
@@ -449,12 +472,14 @@ def index():
 def stats():
     redis_ok = False
     requests_count = 0
-    try:
-        r.incr('requests')
-        requests_count = int(r.get('requests') or 0)
-        redis_ok = True
-    except Exception:
-        pass
+    r = get_redis()
+    if r:
+        try:
+            r.incr('requests')
+            requests_count = int(r.get('requests') or 0)
+            redis_ok = True
+        except Exception:
+            pass
     disk = psutil.disk_usage('/')
     return jsonify({
         'cpu': psutil.cpu_percent(interval=0.5),
@@ -468,7 +493,7 @@ def stats():
 
 @app.route('/api/k8s')
 def k8s_info():
-    if not k8s_available:
+    if not _load_k8s():
         return jsonify({
             'pods': [], 'replicas': 0, 'hpa': None,
             'node': {'name': 'N/A', 'status': 'N/A', 'version': 'N/A', 'pods': 0},
@@ -541,18 +566,7 @@ def k8s_info():
 
 @app.route('/api/scale', methods=['POST'])
 def scale_deployment():
-    """
-    Scale the deployment up or down.
-
-    FIX vs original:
-    - Renamed from `scale()` to avoid shadowing issues and clarify intent
-    - Validates direction input
-    - Enforces MIN/MAX replica bounds (1–10)
-    - Re-reads the deployment after patching to return confirmed replica count
-      (original returned optimistic value before K8s confirmed the patch)
-    - Returns structured response with previous count and direction
-    """
-    if not k8s_available:
+    if not _load_k8s():
         return jsonify({'error': 'Kubernetes not available in this environment'}), 503
     try:
         data = request.get_json()
@@ -599,7 +613,7 @@ def scale_deployment():
 @app.route('/api/events')
 def k8s_events():
     """Fetch recent Kubernetes events for the namespace."""
-    if not k8s_available:
+    if not _load_k8s():
         return jsonify({'events': []})
     try:
         events = v1.list_namespaced_event(namespace=NAMESPACE, limit=20)
@@ -621,6 +635,42 @@ def k8s_events():
         return jsonify({'events': event_list})
     except Exception as e:
         return jsonify({'events': [], 'error': str(e)})
+
+
+@app.route('/api/debug')
+def debug():
+    """Debug endpoint — shows exactly why K8s is connected or not."""
+    kubeconfig_path = os.environ.get('KUBECONFIG', 'NOT SET')
+    file_exists = False
+    if kubeconfig_path != 'NOT SET':
+        file_exists = os.path.exists(kubeconfig_path)
+
+    # Trigger the actual K8s load so we get the real error
+    _load_k8s()
+
+    # Also try reading the kubeconfig file content to check for issues
+    file_readable = False
+    file_preview = None
+    try:
+        with open(kubeconfig_path, 'r') as f:
+            content = f.read().strip()
+            file_readable = True
+            # Show first line to check for BOM or corruption
+            file_preview = content.splitlines()[0] if content else 'EMPTY FILE'
+    except Exception as e:
+        file_preview = f'READ ERROR: {e}'
+
+    return jsonify({
+        'k8s_connected': v1 is not None,
+        'k8s_error': _k8s_error,
+        'KUBECONFIG_env': kubeconfig_path,
+        'kubeconfig_file_exists': file_exists,
+        'kubeconfig_file_readable': file_readable,
+        'kubeconfig_first_line': file_preview,
+        'REDIS_HOST': REDIS_HOST,
+        'NAMESPACE': NAMESPACE,
+        'DEPLOYMENT_NAME': DEPLOYMENT_NAME,
+    })
 
 
 if __name__ == '__main__':

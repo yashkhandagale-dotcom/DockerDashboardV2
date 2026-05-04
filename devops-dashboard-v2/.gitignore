@@ -1,0 +1,15 @@
+# FIX #2 — NEVER commit real kubeconfig files to Git
+# They contain private keys and certificates
+kubeconfig-docker.yaml
+kubeconfig*.yaml
+*.kubeconfig
+.kube/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Docker
+.dockerignore

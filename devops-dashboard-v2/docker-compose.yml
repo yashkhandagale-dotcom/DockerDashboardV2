@@ -9,14 +9,15 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    volumes:
-      - ./kubeconfig-docker.yaml:/root/.kube/config:ro
+    volumes: []
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DEPLOYMENT_NAME=devops-dashboard
       - NAMESPACE=default
+      # FIX #4 — Explicitly tell the K8s client where to find the config
+      - KUBECONFIG=/app/.kube/config
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')"]
       interval: 15s

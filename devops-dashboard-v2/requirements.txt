@@ -1,5 +1,6 @@
-flask
-redis
-psutil
-requests
-kubernetes
+# FIX #11 — Pinned versions to prevent surprise breaking changes on reinstall
+# FIX #12 — Removed 'requests' library (imported in requirements but never used in app.py)
+flask==3.0.3
+redis==5.0.8
+psutil==6.0.0
+kubernetes==30.1.0

@@ -14,16 +14,30 @@ spec:
     - ports:
         - port: 5000   # Only accept traffic on the app port
   egress:
+    # Allow outbound to Redis pods only
     - to:
         - podSelector:
             matchLabels:
               app: redis
       ports:
-        - port: 6379   # Allow outbound to Redis only
+        - port: 6379
+
+    # FIX #10 — Explicitly allow egress to kube-apiserver
+    # Previously port 443 had no 'to:' selector — on strict CNI plugins this gets blocked
+    # namespaceSelector selects the kube-system namespace where the API server lives
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 443
+
+    # Allow DNS resolution (required for service name lookups like 'redis')
     - ports:
-        - port: 443    # Allow K8s API server access (HTTPS)
-        - port: 53     # Allow DNS resolution
-        protocol: UDP
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
