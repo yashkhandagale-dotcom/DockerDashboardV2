@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devops-dashboard-config
+  namespace: default
+data:
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  DEPLOYMENT_NAME: "devops-dashboard"
+  NAMESPACE: "default"

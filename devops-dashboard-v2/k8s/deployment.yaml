@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-dashboard
+  namespace: default
+  labels:
+    app: devops-dashboard
+    version: v2
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: devops-dashboard
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0          # zero-downtime rolling update
+  template:
+    metadata:
+      labels:
+        app: devops-dashboard
+        version: v2
+    spec:
+      serviceAccountName: devops-dashboard-sa  # RBAC — see serviceaccount.yaml
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: devops-dashboard
+          image: yashwonderbiz/devops-dashboard:v2
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              name: http
+
+          env:
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
+            - name: DEPLOYMENT_NAME
+              value: devops-dashboard
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          # Resource requests & limits — critical for HPA to work
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+          # Liveness probe — restarts container if app hangs
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+
+          # Readiness probe — removes pod from Service endpoints until ready
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Startup probe — gives extra time on cold start
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12   # allows up to 60s to start
